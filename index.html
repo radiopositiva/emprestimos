@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prestação de Contas Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f3f4f6;
+            --card: #ffffff;
+            --text: #1f2937;
+            --border: #e5e7eb;
+        }
+        .dark {
+            --bg: #111827;
+            --card: #1f2937;
+            --text: #f9fafb;
+            --primary: #60a5fa;
+            --border: #374151;
+        }
+        body { background-color: var(--bg); color: var(--text); transition: all 0.3s; font-family: 'Segoe UI', sans-serif; }
+        
+        .glass-card { 
+            background: var(--card); 
+            border-radius: 16px; 
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); 
+        }
+        
+        /* Estilo da Lista - Ajuste de Contraste */
+        .payment-item { 
+            display: grid; 
+            grid-template-columns: 50px 1fr 1fr 100px; 
+            align-items: center; 
+            padding: 12px 20px; 
+            border-bottom: 1px solid var(--border); 
+        }
+        
+        .item-scheduled { color: #6b7280; } /* Cinza nítido em vez de opacidade */
+        .dark .item-scheduled { color: #9ca3af; }
+
+        @media (max-width: 600px) {
+            .payment-item { grid-template-columns: 40px 1fr 100px; }
+            .p-status { display: none; }
+        }
+
+        .modal-overlay { 
+            position: fixed; 
+            inset: 0; 
+            background: rgba(0,0,0,0.7); 
+            display: none; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 50; 
+            padding: 20px; 
+        }
+        .receipt-dashed { border: 2px dashed #cbd5e1; background: rgba(128,128,128,0.05); }
+        
+        .extra-payment { background: linear-gradient(135deg, rgba(79, 209, 197, 0.1) 0%, rgba(79, 209, 197, 0.05) 100%); }
+    </style>
+</head>
+<body class="p-4 md:p-8" id="mainBody">
+
+<div class="max-w-3xl mx-auto">
+    <header class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-2xl font-bold text-blue-600 dark:text-blue-400">Controle de Empréstimo</h1>
+            <div class="flex items-center gap-2 text-sm font-medium opacity-80">
+                <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span></span>
+                Sistema Ativo: <span id="liveClock" class="font-mono">00:00:00</span>
+            </div>
+        </div>
+        <button onclick="toggleTheme()" class="p-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-xl hover:scale-105 transition">🌓</button>
+    </header>
+
+    <div class="glass-card p-6 mb-6 flex flex-col md:flex-row gap-4 items-end">
+        <div class="flex-1 w-full">
+            <label class="block text-xs font-bold uppercase mb-2 text-gray-500 dark:text-gray-400">Seu Nome para o Recibo</label>
+            <input type="text" id="workerName" value="Marcos" class="w-full p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none focus:ring-2 ring-blue-500 transition">
+        </div>
+        <div class="flex gap-2 w-full md:w-auto">
+            <button onclick="openExtraPaymentModal()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
+                <span>➕</span> Extra
+            </button>
+            <button onclick="openReceiptModal()" class="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
+                <span>📄</span> Recibo
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="glass-card p-5 text-center border-b-4 border-blue-500">
+            <h3 class="text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Total Emprestado</h3>
+            <p class="text-xl font-black">R$ 3.339,00</p>
+        </div>
+        <div class="glass-card p-5 text-center border-b-4 border-green-500">
+            <h3 class="text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Total Pago</h3>
+            <p class="text-xl font-black text-green-600 dark:text-green-400" id="dashPaid">R$ 0,00</p>
+        </div>
+        <div class="glass-card p-5 text-center border-b-4 border-yellow-500">
+            <h3 class="text-xs uppercase font-bold text-gray-500 dark:text-gray-400 mb-1">Resta Pagar</h3>
+            <p class="text-xl font-black text-yellow-600 dark:text-yellow-500" id="dashRemain">R$ 0,00</p>
+        </div>
+    </div>
+
+    <div class="glass-card p-6 mb-8">
+        <div class="flex justify-between mb-2 font-bold text-sm">
+            <span>Progresso da Quitação</span>
+            <span id="progText" class="text-blue-600 dark:text-blue-400">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 overflow-hidden">
+            <div id="progBar" class="bg-blue-600 h-full transition-all duration-1000 shadow-[0_0_10px_rgba(37,99,235,0.5)]" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <div class="glass-card overflow-hidden">
+        <div class="p-5 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+            <h2 class="font-bold">Cronograma de Parcelas</h2>
+            <span class="text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 px-2 py-1 rounded">TODO SÁBADO 18:00H</span>
+        </div>
+        <div id="paymentList" class="max-h-[400px] overflow-y-auto">
+            </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="extraPaymentModal">
+    <div class="bg-white dark:bg-gray-800 p-8 rounded-2xl max-w-sm w-full shadow-2xl border border-gray-200 dark:border-gray-700">
+        <h3 class="text-xl font-bold mb-6 text-center text-purple-600 dark:text-purple-400">Adicionar Pagamento Extra</h3>
+        <div class="space-y-4 mb-6">
+            <div>
+                <label class="block text-sm font-medium mb-1">Data do Pagamento</label>
+                <input type="date" id="extraDate" class="w-full p-3 rounded-lg border dark:bg-gray-700 dark:border-gray-600 bg-gray-50 dark:text-white outline-none focus:ring-2 ring-purple-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Valor (R$)</label>
+                <input type="number" id="extraAmount" min="1" step="0.01" class="w-full p-3 rounded-lg border dark:bg-gray-700 dark:border-gray-600 bg-gray-50 dark:text-white outline-none focus:ring-2 ring-purple-500" placeholder="Ex: 150,00">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Observação</label>
+                <input type="text" id="extraNote" class="w-full p-3 rounded-lg border dark:bg-gray-700 dark:border-gray-600 bg-gray-50 dark:text-white outline-none focus:ring-2 ring-purple-500" placeholder="Ex: Bônus">
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="closeExtraPaymentModal()" class="flex-1 py-3 bg-gray-200 dark:bg-gray-700 rounded-lg font-bold">Cancelar</button>
+            <button onclick="saveExtraPayment()" class="flex-1 py-3 bg-purple-600 text-white rounded-lg font-bold">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="receiptModal">
+    <div class="bg-white dark:bg-gray-800 p-8 rounded-2xl max-w-sm w-full shadow-2xl border border-gray-200 dark:border-gray-700">
+        <div class="receipt-dashed p-6 mb-6 text-gray-800 dark:text-gray-200 rounded-lg">
+            <div class="text-center border-b pb-4 mb-4 border-gray-300 dark:border-gray-600">
+                <h4 class="font-black text-lg">RECIBO DE PAGAMENTO</h4>
+                <p class="text-xs font-bold text-gray-500" id="recToday">--/--/----</p>
+            </div>
+            <div class="space-y-2 text-sm">
+                <p class="flex justify-between"><span>De:</span> <b id="recName" class="text-blue-600 dark:text-blue-400">---</b></p>
+                <p class="flex justify-between"><span>Parcela:</span> <b id="recRef">#00</b></p>
+                <p class="flex justify-between"><span>Ref. Data:</span> <b id="recDate">--/--</b></p>
+                <div class="border-t pt-2 mt-4 border-gray-300 dark:border-gray-600 flex justify-between text-base font-bold text-green-600 dark:text-green-400">
+                    <span>VALOR PAGO:</span> <span id="recVal">R$ 0,00</span>
+                </div>
+                <p class="text-[10px] text-center mt-4 font-bold text-gray-500">Saldo Restante: <span id="recRem">R$ 0,00</span></p>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="closeReceiptModal()" class="flex-1 py-3 bg-gray-200 dark:bg-gray-700 rounded-lg font-bold">Fechar</button>
+            <button onclick="sendWhatsapp()" class="flex-[2] py-3 bg-green-600 text-white rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-green-700 transition">
+                <span>WhatsApp</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const CONFIG = {
+        total: 3339.00,
+        weekly: 100.00,
+        start: new Date('2026-01-17T18:00:00'),
+    };
+
+    let extraPayments = JSON.parse(localStorage.getItem('extraPayments') || '[]');
+    let basePaid = 100.00; // Primeira parcela paga
+
+    function toggleTheme() {
+        document.body.classList.toggle('dark');
+        localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+    }
+    if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+
+    function renderParcelas() {
+        const listEl = document.getElementById('paymentList');
+        listEl.innerHTML = '';
+        
+        // Renderiza a parcela #01 (fixa paga)
+        listEl.innerHTML += createItemHTML('01', '17/01/2026', 100, 'PAGO AUTOMÁTICO', true);
+
+        // Renderiza extras
+        extraPayments.forEach((p, i) => {
+            const dateStr = new Date(p.data + 'T12:00:00').toLocaleDateString('pt-BR');
+            listEl.innerHTML += createItemHTML(`E${i+1}`, dateStr, p.valor, 'EXTRA', true, true);
+        });
+
+        // Renderiza próximas parcelas (exemplo de 34 parcelas totais conforme seu código original)
+        const datas = ["24/01/2026", "31/01/2026", "07/02/2026", "14/02/2026", "21/02/2026", "28/02/2026", "07/03/2026", "14/03/2026", "21/03/2026", "28/03/2026", "04/04/2026", "11/04/2026", "18/04/2026", "25/04/2026", "02/05/2026", "09/05/2026", "16/05/2026", "23/05/2026", "30/05/2026", "06/06/2026", "13/06/2026", "20/06/2026", "27/06/2026", "04/07/2026", "11/07/2026", "18/07/2026", "25/07/2026", "01/08/2026", "08/08/2026", "15/08/2026", "22/08/2026", "29/08/2026"];
+        
+        datas.forEach((dt, i) => {
+            listEl.innerHTML += createItemHTML((i+2).toString().padStart(2,'0'), dt, 100, 'AGENDADO', false);
+        });
+        
+        // Parcela final
+        listEl.innerHTML += createItemHTML('34', '05/09/2026', 39, 'AGENDADO', false);
+    }
+
+    function createItemHTML(id, date, val, status, isPaid, isExtra = false) {
+        const statusClass = isPaid ? (isExtra ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300' : 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300') : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400';
+        const textClass = isPaid ? (isExtra ? 'text-teal-600 dark:text-teal-400' : 'text-green-600 dark:text-green-400') : 'text-gray-500 dark:text-gray-400';
+        const itemBg = isExtra ? 'extra-payment' : '';
+
+        return `
+            <div class="payment-item ${itemBg}">
+                <span class="font-bold text-gray-400 text-xs">#${id}</span>
+                <span class="font-semibold ${isPaid ? 'text-gray-900 dark:text-white' : 'text-gray-500'}">${date}</span>
+                <span class="p-status">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-black ${statusClass}">${status}</span>
+                </span>
+                <span class="text-right font-bold ${textClass}">R$ ${parseFloat(val).toFixed(2)}</span>
+            </div>
+        `;
+    }
+
+    function calculateAndRender() {
+        const extraTotal = extraPayments.reduce((acc, p) => acc + parseFloat(p.valor), 0);
+        const currentTotalPaid = basePaid + extraTotal;
+        const remaining = CONFIG.total - currentTotalPaid;
+        const percent = ((currentTotalPaid / CONFIG.total) * 100).toFixed(1);
+
+        document.getElementById('dashPaid').innerText = `R$ ${currentTotalPaid.toFixed(2)}`;
+        document.getElementById('dashRemain').innerText = `R$ ${remaining.toFixed(2)}`;
+        document.getElementById('progBar').style.width = Math.min(100, percent) + '%';
+        document.getElementById('progText').innerText = Math.min(100, percent) + '%';
+        
+        renderParcelas();
+    }
+
+    function openExtraPaymentModal() {
+        document.getElementById('extraDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('extraPaymentModal').style.display = 'flex';
+    }
+
+    function closeExtraPaymentModal() { document.getElementById('extraPaymentModal').style.display = 'none'; }
+
+    function saveExtraPayment() {
+        const date = document.getElementById('extraDate').value;
+        const amount = parseFloat(document.getElementById('extraAmount').value);
+        if (!date || !amount) return alert('Preencha os campos corretamente');
+        
+        extraPayments.push({ data: date, valor: amount, observacao: document.getElementById('extraNote').value });
+        localStorage.setItem('extraPayments', JSON.stringify(extraPayments));
+        closeExtraPaymentModal();
+        calculateAndRender();
+    }
+
+    function openReceiptModal() {
+        const extraTotal = extraPayments.reduce((acc, p) => acc + parseFloat(p.valor), 0);
+        const currentTotalPaid = basePaid + extraTotal;
+        
+        let lastPay = { data: '2026-01-17', valor: 100 };
+        if(extraPayments.length > 0) lastPay = extraPayments[extraPayments.length-1];
+
+        document.getElementById('recName').innerText = document.getElementById('workerName').value;
+        document.getElementById('recRef').innerText = `#${1 + extraPayments.length}`;
+        document.getElementById('recDate').innerText = new Date((lastPay.data || lastPay.data_pagamento) + 'T12:00:00').toLocaleDateString('pt-BR');
+        document.getElementById('recVal').innerText = `R$ ${parseFloat(lastPay.valor).toFixed(2)}`;
+        document.getElementById('recRem').innerText = `R$ ${(CONFIG.total - currentTotalPaid).toFixed(2)}`;
+        document.getElementById('recToday').innerText = new Date().toLocaleDateString('pt-BR');
+        document.getElementById('receiptModal').style.display = 'flex';
+    }
+
+    function closeReceiptModal() { document.getElementById('receiptModal').style.display = 'none'; }
+
+    function sendWhatsapp() {
+        const text = `*COMPROVANTE DE PAGAMENTO*%0A---%0A*Funcionário:* ${document.getElementById('recName').innerText}%0A*Valor:* ${document.getElementById('recVal').innerText}%0A*Saldo Devedor:* ${document.getElementById('recRem').innerText}%0A---%0A_Sistema de Gestão 2026_`;
+        window.open(`https://wa.me/?text=${text}`, '_blank');
+    }
+
+    setInterval(() => { document.getElementById('liveClock').innerText = new Date().toLocaleTimeString('pt-BR'); }, 1000);
+    window.addEventListener('DOMContentLoaded', calculateAndRender);
+</script>
+</body>
+</html>
